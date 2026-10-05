@@ -56,6 +56,10 @@ test('SWAP exchanges positions safely and SHOCKWAVE deals synchronized hit and s
   const waveMatch = world([fighter(1, 400, 'SHOCKWAVE'), fighter(2, 520, 'FREEZE')]);
   assert.equal(Powers.activate(waveMatch.fighters[0], waveMatch.fighters[1], waveMatch), true);
   assert.equal(waveMatch.shockwaves.length, 1);
+  const waveColor = Powers.COLORS.SHOCKWAVE.match(/^#([0-9a-f]{6})$/i);
+  assert.ok(waveColor);
+  assert.ok([0, 2, 4].every(index => Number.parseInt(waveColor[1].slice(index, index + 2), 16) < 40));
+  assert.equal(Powers.CONFIG.SHOCKWAVE.damage, 8);
   advance(0.2, waveMatch);
   assert.equal(waveMatch.fighters[1].health, 100 - Powers.CONFIG.SHOCKWAVE.damage);
   assert.equal(waveMatch.shockwaves.length, 1);

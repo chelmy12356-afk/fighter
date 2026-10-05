@@ -73,7 +73,7 @@
     // A dome bursts out of you, shoves the opponent away, shatters clones and wipes enemy projectiles.
     SHOCKWAVE: Object.freeze({
       cooldown: 12, radius: 240, speed: 560,   // dome grows to `radius` px at `speed` px/s
-      damage: 4, knockback: 260, stun: 0.35,
+      damage: 8, knockback: 260, stun: 0.35,
       shoveDistance: 110, shoveTime: 0.25,     // guaranteed slide, even if the hit is blocked
       shake: 10                                // passed to world.onShake(intensity, seconds) if you define it
     })
@@ -91,7 +91,7 @@
     BERSERK: '#ff8a3d',
     TRAP: '#ff5d73',
     SWAP: '#4dffb8',
-    SHOCKWAVE: '#eaf3ff'
+    SHOCKWAVE: '#111318'
   });
 
   const NAMES = Object.freeze(Object.keys(CONFIG));
@@ -1079,18 +1079,19 @@
     const a = 1 - k * k;                              // fades out near the edge
     ctx.save();
     ctx.globalAlpha = a;
-    const g = ctx.createRadialGradient(w.x, w.y, w.r * 0.55, w.x, w.y, w.r);
-    g.addColorStop(0, 'rgba(220,235,255,0)');
-    g.addColorStop(1, 'rgba(190,220,255,0.38)');
+    const g = ctx.createRadialGradient(w.x, w.y, w.r * 0.45, w.x, w.y, w.r);
+    g.addColorStop(0, 'rgba(5,6,8,0.08)');
+    g.addColorStop(1, 'rgba(5,6,8,0.88)');
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(w.x, w.y, w.r, Math.PI, TAU); ctx.closePath(); ctx.fill();   // dome body
 
-    glow(ctx, COLORS.SHOCKWAVE, 22);
+    glow(ctx, '#aeb8ca', 18);
     ctx.lineCap = 'round';
     ctx.lineWidth = 3 + 9 * (1 - k);                  // bright rim thins as it spreads
     ctx.beginPath(); ctx.arc(w.x, w.y, w.r, Math.PI, TAU); ctx.stroke();
 
-    ctx.shadowBlur = 8; ctx.lineWidth = 2;            // two echo rings trailing behind the rim
+    glow(ctx, '#626d80', 8);
+    ctx.lineWidth = 2;                                  // two echo rings trailing behind the rim
     for (let i = 1; i <= 2; i++) {
       const rr = w.r - i * 16;
       if (rr > 6) {
@@ -1099,6 +1100,9 @@
       }
     }
 
+    ctx.strokeStyle = '#aeb8ca';
+    ctx.shadowColor = '#aeb8ca';
+    ctx.shadowBlur = 8;
     ctx.globalAlpha = a * 0.8;                        // floor ripple + dust streaks
     ctx.lineWidth = 3;
     ellipseStroke(ctx, w.x, w.y, w.r, w.r * 0.1);
