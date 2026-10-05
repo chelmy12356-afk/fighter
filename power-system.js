@@ -67,6 +67,15 @@
       maxTraps: 3,            // per owner
       armTime: 0.5,           // a fresh trap is harmless for this long
       triggerRadius: 28
+    }),
+    // Trade places with the opponent. Fails (no cooldown spent) if you're already on top of each other.
+    SWAP: Object.freeze({ cooldown: 9, minDistance: 50 }),
+    // A dome bursts out of you, shoves the opponent away, shatters clones and wipes enemy projectiles.
+    SHOCKWAVE: Object.freeze({
+      cooldown: 12, radius: 240, speed: 560,   // dome grows to `radius` px at `speed` px/s
+      damage: 4, knockback: 260, stun: 0.35,
+      shoveDistance: 110, shoveTime: 0.25,     // guaranteed slide, even if the hit is blocked
+      shake: 10                                // passed to world.onShake(intensity, seconds) if you define it
     })
   });
 
@@ -80,7 +89,9 @@
     INVISIBILITY: '#d3dcff',
     FREEZE: '#9cf3ff',
     BERSERK: '#ff8a3d',
-    TRAP: '#ff5d73'
+    TRAP: '#ff5d73',
+    SWAP: '#4dffb8',
+    SHOCKWAVE: '#eaf3ff'
   });
 
   const NAMES = Object.freeze(Object.keys(CONFIG));
@@ -103,7 +114,7 @@
   const rng = world => (typeof world.random === 'function' ? world.random() : Math.random());
 
   function ensureWorld(world) {
-    for (const key of ['projectiles', 'clones', 'traps', 'statues', 'effects']) {
+    for (const key of ['projectiles', 'clones', 'traps', 'statues', 'shockwaves', 'effects']) {
       if (!Array.isArray(world[key])) world[key] = [];
     }
     return world;
@@ -141,6 +152,7 @@
     world.clones = [];
     world.traps = [];
     world.statues = [];
+    world.shockwaves = [];
     world.effects = [];
     world.fxTime = 0;
     for (const fighter of fighters) {
@@ -296,6 +308,30 @@
         armT: cfg.armTime
       });
       effect(world, 'trap', x, world.groundY - 10, 0.5, { color: COLORS.TRAP });
+    },
+
+    SWAP(user, foe, world, cfg) {
+      const ux = user.x, fx = foe.x;
+      if (Math.abs(ux - fx) < cfg.minDistance) return false;   // nothing to swap: keep the cooldown
+      const lo = world.left + 24, hi = world.right - 24;
+      user.x = clamp(fx, lo, hi);
+      foe.x = clamp(ux, lo, hi);
+      user.vx = 0;
+      foe.vx = 0;
+      user.facing = Math.sign(foe.x - user.x) || user.facing || 1;   // both end up facing each other
+      foe.facing = Math.sign(user.x - foe.x) || foe.facing || 1;
+      effect(world, 'teleport', ux, user.y, 0.55, { color: COLORS.SWAP });
+      effect(world, 'teleport', fx, foe.y, 0.55, { color: COLORS.SWAP });
+      effect(world, 'swap', ux, user.y, 0.55, { color: COLORS.SWAP, x2: fx });
+    },
+
+    SHOCKWAVE(user, foe, world, cfg) {
+      world.shockwaves.push({
+        ownerId: user.id, x: user.x, y: user.y, r: 0, maxR: cfg.radius,
+        hit: [], shoves: [], seed: Math.random()
+      });
+      effect(world, 'shockBurst', user.x, user.y, 0.4, { color: COLORS.SHOCKWAVE });
+      if (typeof world.onShake === 'function') world.onShake(cfg.shake, 0.3);
     }
   };
 
@@ -325,6 +361,7 @@
     updateClones(world, dt);
     updateTraps(world, dt);
     updateStatues(world, dt);
+    updateShockwaves(world, dt);
     for (let i = world.effects.length - 1; i >= 0; i--) {
       world.effects[i].life -= dt;
       if (world.effects[i].life <= 0) world.effects.splice(i, 1);
@@ -579,6 +616,60 @@
     }
   }
 
+  /* ── shockwave dome ── */
+
+  function updateShockwaves(world, dt) {
+    const cfg = CONFIG.SHOCKWAVE;
+    const shoveSpeed = cfg.shoveDistance / cfg.shoveTime;
+    for (let i = world.shockwaves.length - 1; i >= 0; i--) {
+      const w = world.shockwaves[i];
+      const owner = byId(world, w.ownerId) || { x: w.x };
+      const foe = foeOf(world, w.ownerId);
+
+      if (w.r < w.maxR) {
+        w.r = Math.min(w.maxR, w.r + cfg.speed * dt);
+
+        // the front reaches the opponent: hit + guaranteed shove away from the caster
+        if (!isDead(foe) && foe.invisibleT <= 0 && !w.hit.includes(foe) &&
+            Math.hypot(foe.x - w.x, foe.y - 55 - w.y) <= w.r + 25) {
+          w.hit.push(foe);
+          damage(owner, foe, cfg.damage, cfg.knockback, cfg.stun, world, [foe.x, foe.y - 55]);
+          foe.pullT = 0;                                   // being blasted breaks a pull
+          foe.pullTargetId = null;
+          w.shoves.push({ target: foe, dir: Math.sign(foe.x - w.x) || owner.facing || 1, left: cfg.shoveDistance });
+          effect(world, 'impact', foe.x, foe.y - 55, 0.4, { color: COLORS.SHOCKWAVE });
+        }
+        // enemy clones are blasted too (their health is low, so they usually shatter)
+        for (const c of world.clones) {
+          if (c.ownerId === w.ownerId || c.spawnT > 0 || w.hit.includes(c)) continue;
+          if (Math.hypot(c.x - w.x, c.y - 55 - w.y) <= w.r + 25) {
+            w.hit.push(c);
+            damageClone(world, c, cfg.damage, w.x, 560);
+            effect(world, 'impact', c.x, c.y - 55, 0.35, { color: COLORS.SHOCKWAVE });
+          }
+        }
+        // enemy projectiles that touch the dome are wiped out
+        for (let j = world.projectiles.length - 1; j >= 0; j--) {
+          const p = world.projectiles[j];
+          if (p.ownerId !== w.ownerId && Math.hypot(p.x - w.x, p.y - w.y) <= w.r + 15) {
+            effect(world, 'impact', p.x, p.y, 0.3, { color: COLORS.PROJECTILE });
+            world.projectiles.splice(j, 1);
+          }
+        }
+      }
+
+      for (let s = w.shoves.length - 1; s >= 0; s--) {
+        const shove = w.shoves[s];
+        const step = Math.min(shove.left, shoveSpeed * dt);
+        shove.target.x = clamp(shove.target.x + shove.dir * step, world.left + 24, world.right - 24);
+        shove.left -= step;
+        if (shove.left <= 0.01 || isDead(shove.target)) w.shoves.splice(s, 1);
+      }
+
+      if (w.r >= w.maxR && w.shoves.length === 0) world.shockwaves.splice(i, 1);
+    }
+  }
+
   /* ═════════════════════════ CLONE HIT DETECTION ═════════════════════════ */
 
   // Call this from your melee code. Returns true when the swing hit a clone
@@ -792,6 +883,24 @@
         }
         ring(ctx, v.x, v.y, 10 + p * 36);
         break;
+      case 'swap': {
+        const x0 = v.x, x1 = v.x2, y0 = v.y - 60;
+        const mx = (x0 + x1) / 2, lift = 40 + Math.abs(x1 - x0) * 0.12;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(mx, y0 - lift, x1, y0); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo(mx, y0 + lift * 0.5, x1, y0); ctx.stroke();
+        const u = clamp(p * 1.4, 0, 1);                              // two sparks race across, crossing paths
+        const q = (s, a0, c, a1) => (1 - s) * (1 - s) * a0 + 2 * (1 - s) * s * c + s * s * a1;
+        ctx.beginPath(); ctx.arc(q(u, x0, mx, x1), q(u, y0, y0 - lift, y0), 6, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(q(u, x1, mx, x0), q(u, y0, y0 + lift * 0.5, y0), 6, 0, TAU); ctx.fill();
+        break;
+      }
+      case 'shockBurst':
+        ctx.globalAlpha = a * 0.7;
+        ctx.beginPath(); ctx.arc(v.x, v.y, 10 + p * 40, Math.PI, TAU); ctx.fill();   // flash at the caster's feet
+        ctx.globalAlpha = a;
+        ctx.lineWidth = 4;
+        rays(ctx, v.x, v.y - 10, 16 + p * 30, 34 + p * 50, 12, v.seed * 6);
+        break;
       case 'ready':
         ellipseStroke(ctx, v.x, v.y, 16 + p * 30, 5 + p * 8);
         ctx.beginPath();
@@ -966,6 +1075,46 @@
     ctx.restore();
   }
 
+  function drawShockwave(ctx, w) {
+    if (w.r < 1) return;
+    const k = clamp(w.r / w.maxR, 0, 1);              // 0 → 1 as the dome grows
+    const a = 1 - k * k;                              // fades out near the edge
+    ctx.save();
+    ctx.globalAlpha = a;
+    const g = ctx.createRadialGradient(w.x, w.y, w.r * 0.55, w.x, w.y, w.r);
+    g.addColorStop(0, 'rgba(220,235,255,0)');
+    g.addColorStop(1, 'rgba(190,220,255,0.38)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(w.x, w.y, w.r, Math.PI, TAU); ctx.closePath(); ctx.fill();   // dome body
+
+    glow(ctx, COLORS.SHOCKWAVE, 22);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3 + 9 * (1 - k);                  // bright rim thins as it spreads
+    ctx.beginPath(); ctx.arc(w.x, w.y, w.r, Math.PI, TAU); ctx.stroke();
+
+    ctx.shadowBlur = 8; ctx.lineWidth = 2;            // two echo rings trailing behind the rim
+    for (let i = 1; i <= 2; i++) {
+      const rr = w.r - i * 16;
+      if (rr > 6) {
+        ctx.globalAlpha = a * (0.5 - i * 0.15);
+        ctx.beginPath(); ctx.arc(w.x, w.y, rr, Math.PI, TAU); ctx.stroke();
+      }
+    }
+
+    ctx.globalAlpha = a * 0.8;                        // floor ripple + dust streaks
+    ctx.lineWidth = 3;
+    ellipseStroke(ctx, w.x, w.y, w.r, w.r * 0.1);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 12; i++) {
+      const side = i % 2 ? 1 : -1;
+      const d = w.r * (0.3 + 0.7 * rand01(w.seed, i)), yy = w.y - 3 - rand01(w.seed, i + 40) * 6;
+      ctx.moveTo(w.x + side * d, yy); ctx.lineTo(w.x + side * (d + 22), yy);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /* ── fighter auras ── */
 
   function drawBerserkAura(ctx, f, t) {
@@ -1119,6 +1268,7 @@
       if (f.freezeT > 0) drawFreezeShell(ctx, f, t);
       if (f.invisibleT > 0) drawInvisibleShimmer(ctx, f, t);
     }
+    for (const w of world.shockwaves || EMPTY) drawShockwave(ctx, w);
     for (const p of world.projectiles || EMPTY) drawProjectile(ctx, p, t);
     for (const v of world.effects || EMPTY) drawEffect(ctx, v);
   }

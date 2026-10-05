@@ -76,6 +76,7 @@ class GameSimulation {
     this.clones = [];
     this.traps = [];
     this.statues = [];
+    this.shockwaves = [];
     this.effects = [];
     this.fxTime = 0;
     this.state = GS.INTRO;
@@ -88,6 +89,8 @@ class GameSimulation {
     this.slowmo = 0;
     this.ts = 1;
     this.shake = 0;
+    this.shakeDuration = 0;
+    this.shakeIntensity = 0;
     this.ox = 0;
     this.oy = 0;
     this.inputs = [newInput(), newInput()];
@@ -98,9 +101,10 @@ class GameSimulation {
       d1: 100, d2: 100, time: 60, round: 1, h1: 100, h2: 100
     };
     this.powerWorld = {
-      powerMode: this.powerMode, left: LEFT, right: RIGHT, groundY: GROUND_Y,
+      powerMode: this.powerMode, left: LEFT, right: RIGHT, groundY: GROUND_Y, fxTime: 0,
       fighters: this.fighters, projectiles: this.projectiles, clones: this.clones,
-      traps: this.traps, statues: this.statues, effects: this.effects,
+      traps: this.traps, statues: this.statues, shockwaves: this.shockwaves, effects: this.effects,
+      onShake: (intensity, duration) => this.startShake(intensity, duration),
       onHit: (_damage, heavy, _point, blocked) => {
         this.recordHit(_damage, heavy, _point, blocked);
       }
@@ -127,6 +131,7 @@ class GameSimulation {
       if (effect.k === 'd') effect.y -= 42 * dt;
       if (effect.t > (effect.k === 's' ? 0.22 : 0.7)) this.fx.splice(index, 1);
     }
+    this.updateShake(dt);
 
     if (this.state === GS.INTRO) {
       this.roundDelay -= dt;
@@ -329,16 +334,37 @@ class GameSimulation {
     if (blocked) {
       this.fx.push({ k: 's', x: point[0], y: point[1], t: 0, strong: false, bl: true });
       while (this.fx.length > 120) this.fx.shift();
-      this.shake = Math.max(this.shake, 0.08);
+      this.startShake(6, 0.08);
       return;
     }
-    this.shake = Math.max(this.shake, heavy ? 0.25 : 0.14);
+    this.startShake(heavy ? 13 : 9, heavy ? 0.25 : 0.14);
     this.fx.push({ k: 's', x: point[0], y: point[1], t: 0, strong: !!heavy, bl: false });
     this.fx.push({ k: 'd', x: point[0], y: point[1] - 30, t: 0, text: String(damage | 0), big: !!heavy });
     while (this.fx.length > 120) this.fx.shift();
     for (const fighter of this.fighters) {
       fighter.freeze = Math.max(fighter.freeze, heavy ? 0.09 : 0.06);
     }
+  }
+
+  startShake(intensity, duration) {
+    if (duration >= this.shake) {
+      this.shake = duration;
+      this.shakeDuration = duration;
+      this.shakeIntensity = intensity;
+    }
+  }
+
+  updateShake(dt) {
+    if (this.shake <= 0) {
+      this.shake = 0;
+      this.ox = 0;
+      this.oy = 0;
+      return;
+    }
+    this.shake = Math.max(0, this.shake - dt);
+    const amplitude = this.shakeIntensity * (this.shake / Math.max(this.shakeDuration, 0.001));
+    this.ox = (Math.random() * 2 - 1) * amplitude;
+    this.oy = (Math.random() * 2 - 1) * amplitude;
   }
 
   separateFighters() {
@@ -404,6 +430,7 @@ class GameSimulation {
     this.clones = this.powerWorld.clones;
     this.traps = this.powerWorld.traps;
     this.statues = this.powerWorld.statues;
+    this.shockwaves = this.powerWorld.shockwaves;
     this.effects = this.powerWorld.effects;
     this.powerWorld.fighters = this.fighters;
     this.inputs = [newInput(), newInput()];
@@ -447,8 +474,10 @@ class GameSimulation {
         clones: this.clones,
         traps: this.traps,
         statues: this.statues,
+        shockwaves: this.shockwaves.map(({ ownerId, x, y, r, maxR, seed }) =>
+          ({ ownerId, x, y, r, maxR, seed })),
         effects: this.effects,
-        fxTime: this.fxTime
+        fxTime: this.powerWorld.fxTime
       },
       fx: this.fx.map(effect => ({ ...effect })),
       fighters: this.fighters.map(fighter => Object.fromEntries(

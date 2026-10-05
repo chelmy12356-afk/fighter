@@ -17,7 +17,7 @@ function fighter(id, x, power) {
 function world(players = [fighter(1, 400, 'TELEPORT'), fighter(2, 800, 'FREEZE')]) {
   return {
     powerMode: true, left: 70, right: 1210, groundY: 612,
-    fighters: players, projectiles: [], clones: [], traps: [], statues: [], effects: [],
+    fighters: players, projectiles: [], clones: [], traps: [], statues: [], shockwaves: [], effects: [],
     hits: [], onHit(...hit) { this.hits.push(hit); }
   };
 }
@@ -38,7 +38,29 @@ test('assigns different powers to both fighters each round', () => {
     assert.ok(Powers.NAMES.includes(powerSet[0]));
     assert.ok(Powers.NAMES.includes(powerSet[1]));
   }
-  assert.equal(Powers.NAMES.length, 10);
+  assert.equal(Powers.NAMES.length, 12);
+});
+
+test('SWAP exchanges positions safely and SHOCKWAVE deals synchronized hit and shove', () => {
+  const swapMatch = world([fighter(1, 400, 'SWAP'), fighter(2, 800, 'FREEZE')]);
+  assert.equal(Powers.activate(swapMatch.fighters[0], swapMatch.fighters[1], swapMatch), true);
+  assert.equal(swapMatch.fighters[0].x, 800);
+  assert.equal(swapMatch.fighters[1].x, 400);
+  assert.equal(swapMatch.fighters[0].facing, -1);
+  assert.equal(swapMatch.fighters[1].facing, 1);
+
+  const closeMatch = world([fighter(1, 400, 'SWAP'), fighter(2, 430, 'FREEZE')]);
+  assert.equal(Powers.activate(closeMatch.fighters[0], closeMatch.fighters[1], closeMatch), false);
+  assert.equal(closeMatch.fighters[0].powerCooldown, 0);
+
+  const waveMatch = world([fighter(1, 400, 'SHOCKWAVE'), fighter(2, 520, 'FREEZE')]);
+  assert.equal(Powers.activate(waveMatch.fighters[0], waveMatch.fighters[1], waveMatch), true);
+  assert.equal(waveMatch.shockwaves.length, 1);
+  advance(0.2, waveMatch);
+  assert.equal(waveMatch.fighters[1].health, 100 - Powers.CONFIG.SHOCKWAVE.damage);
+  assert.equal(waveMatch.shockwaves.length, 1);
+  assert.ok(waveMatch.fighters[1].x > 520);
+  assert.equal(waveMatch.hits.length, 1);
 });
 
 test('activates each configured power once and blocks reuse during cooldown', () => {
@@ -132,9 +154,10 @@ test('round reset clears every active entity, cooldown, and temporary status', (
   match.clones.push({});
   match.traps.push({});
   match.statues.push({});
+  match.shockwaves.push({});
   match.effects.push({});
   Powers.resetRound(match, match.fighters);
-  assert.deepEqual([match.projectiles, match.clones, match.traps, match.statues, match.effects], [[], [], [], [], []]);
+  assert.deepEqual([match.projectiles, match.clones, match.traps, match.statues, match.shockwaves, match.effects], [[], [], [], [], [], []]);
   assert.equal(first.powerCooldown, 0);
   assert.equal(first.berserkT, 0);
   assert.equal(first.invisibleT, 0);

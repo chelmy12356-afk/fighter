@@ -88,8 +88,9 @@ test('power mode assigns unique powers and activates Shift abilities locally and
 
   game.evaluate('M.net.role = "host"; M.net.connected = true; startMatch(false, true); M.p1.x = 700; M.p1.canControl = true; frame(16)');
   assert.equal(game.evaluate('M.p1.x'), 700);
-  game.evaluate('applySnapshot({type:"state",state:2,time:60,round:1,endDelay:0,winner:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,H:{},powerMode:true,powerEntities:{traps:[{ownerId:2}],fxTime:0},fighters:[{},{}]})');
+  game.evaluate('applySnapshot({type:"state",state:2,time:60,round:1,endDelay:0,winner:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,H:{},powerMode:true,powerEntities:{traps:[{ownerId:2}],shockwaves:[{ownerId:1,r:20,maxR:240}],fxTime:0},fighters:[{},{}]})');
   assert.equal(game.evaluate('M.traps.length'), 1);
+  assert.equal(game.evaluate('M.shockwaves.length'), 1);
   assert.equal(game.evaluate('typeof makeSnapshot'), 'undefined');
 });
 

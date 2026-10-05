@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const PowerSystem = require('./power-system');
 const { GameSimulation, GS } = require('./game-simulation');
 
 test('server assigns unique round powers and serializes authoritative snapshots', () => {
@@ -51,12 +52,33 @@ test('server simulates powers and ignores client-supplied damage or cooldown sta
   assert.equal(game.snapshot().powerEntities.projectiles.length, 0);
 });
 
+test('server-authoritative match snapshots include new Shockwave entities and resolve their hit', () => {
+  const game = new GameSimulation(true);
+  game.state = GS.FIGHT;
+  const [attacker, target] = game.fighters;
+  attacker.canControl = target.canControl = true;
+  attacker.x = 450;
+  target.x = 520;
+  attacker.power = 'SHOCKWAVE';
+  target.power = 'SWAP';
+  game.setInput(1, 128);
+
+  game.step(1 / 60);
+  assert.equal(game.snapshot().powerEntities.shockwaves.length, 1);
+  assert.doesNotThrow(() => JSON.stringify(game.snapshot()));
+  for (let index = 0; index < 24; index++) game.step(1 / 60);
+  assert.equal(target.health, 100 - PowerSystem.CONFIG.SHOCKWAVE.damage);
+  assert.ok(target.x > 520);
+  assert.ok(game.snapshot().powerEntities.shockwaves.length > 0);
+});
+
 test('server resets powers, cooldowns, scores and entities for a rematch', () => {
   const game = new GameSimulation(true);
   game.state = GS.MATCH_END;
   game.roundWins = [2, 0];
   game.projectiles.push({ ownerId: 1 });
   game.traps.push({ ownerId: 2 });
+  game.shockwaves.push({ ownerId: 1 });
   game.fighters[0].powerCooldown = 8;
 
   game.restart();
@@ -68,5 +90,6 @@ test('server resets powers, cooldowns, scores and entities for a rematch', () =>
   assert.equal(game.fighters[0].powerCooldown, 0);
   assert.equal(game.projectiles.length, 0);
   assert.equal(game.traps.length, 0);
+  assert.equal(game.shockwaves.length, 0);
   assert.notEqual(game.fighters[0].power, game.fighters[1].power);
 });

@@ -144,6 +144,8 @@ class Fighter{
    case 'FREEZE':return dist<245;
    case 'BERSERK':return dist<285;
    case 'TRAP':return this.grounded&&dist<175;
+   case 'SWAP':return dist>PowerSystem.CONFIG.SWAP.minDistance&&dist<420;
+   case 'SHOCKWAVE':return dist>80&&dist<PowerSystem.CONFIG.SHOCKWAVE.radius;
    default:return false;
   }
  }
@@ -320,7 +322,7 @@ class Fighter{
 
 // ---------- game / match flow ----------
 const GS={MENU:0,INTRO:1,FIGHT:2,ROUND_END:3,AWARD:4,MATCH_END:5};
-const M={state:0,p1:null,p2:null,fighters:[],vsCpu:true,powerMode:false,projectiles:[],clones:[],traps:[],statues:[],effects:[],round:1,time:RT,winner:null,endDelay:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,msg:'',msgT:0,net:{role:null,ws:null,room:null,connected:false,powerMode:false,intentional:false},left:AL,right:AR,groundY:GY};
+const M={state:0,p1:null,p2:null,fighters:[],vsCpu:true,powerMode:false,projectiles:[],clones:[],traps:[],statues:[],shockwaves:[],effects:[],round:1,time:RT,winner:null,endDelay:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,msg:'',msgT:0,net:{role:null,ws:null,room:null,connected:false,powerMode:false,intentional:false},left:AL,right:AR,groundY:GY};
 const H={p1n:'PLAYER 1',p2n:'PLAYER 2',p1w:0,p2w:0,d1:100,d2:100,time:60,round:1,h1:100,h2:100};
 let timers=[],fx=[],ann=null;
 const after=(s,f)=>timers.push([s,f]);
@@ -568,7 +570,7 @@ function applySnapshot(snapshot){
  Object.assign(H,snapshot.H);
  snapshot.fighters.forEach((data,index)=>netFields.forEach(key=>{if(key in data)M.fighters[index][key]=data[key]}));
  if(snapshot.powerEntities&&typeof snapshot.powerEntities==='object'){
-  for(const key of ['projectiles','clones','traps','statues','effects'])M[key]=Array.isArray(snapshot.powerEntities[key])?snapshot.powerEntities[key]:[];
+  for(const key of ['projectiles','clones','traps','statues','shockwaves','effects'])M[key]=Array.isArray(snapshot.powerEntities[key])?snapshot.powerEntities[key]:[];
   if(Number.isFinite(snapshot.powerEntities.fxTime))M.fxTime=snapshot.powerEntities.fxTime;
  }
  fx=Array.isArray(snapshot.fx)?snapshot.fx:[];
