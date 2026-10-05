@@ -937,10 +937,9 @@
   function drawTrap(ctx, trap, t) {
     const cfg = CONFIG.TRAP;
     const armed = !(trap.armT > 0);
-    const rise = armed ? 1 : 1 - trap.armT / cfg.armTime;          // spikes grow while arming
     const blink = trap.life < 2 ? (Math.sin(t * 20) > 0 ? 1 : 0.35) : 1;
     ctx.save();
-    ctx.globalAlpha = (armed ? 0.95 : 0.4 + 0.2 * Math.sin(t * 16)) * blink;
+    ctx.globalAlpha = (armed ? 0.95 : 0.85) * blink;
     if (armed) {                                                   // pulsing danger zone
       ctx.save();
       ctx.globalAlpha *= 0.3 + 0.2 * Math.sin(t * 6);
@@ -956,10 +955,9 @@
     ctx.shadowColor = COLORS.TRAP;
     ctx.shadowBlur = armed ? 12 : 4;
     for (const [dx, h] of [[-12, 15], [0, 22], [12, 15]]) {
-      const hh = h * rise;
       ctx.beginPath();
       ctx.moveTo(trap.x + dx - 6, trap.y - 1);
-      ctx.lineTo(trap.x + dx, trap.y - 1 - hh);
+      ctx.lineTo(trap.x + dx, trap.y - 1 - h);
       ctx.lineTo(trap.x + dx + 6, trap.y - 1);
       ctx.closePath(); ctx.fill(); ctx.stroke();
     }

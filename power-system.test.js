@@ -63,6 +63,29 @@ test('SWAP exchanges positions safely and SHOCKWAVE deals synchronized hit and s
   assert.equal(waveMatch.hits.length, 1);
 });
 
+test('a newly placed trap appears at full size immediately while remaining unarmed', () => {
+  const match = world([fighter(1, 400, 'TRAP'), fighter(2, 800, 'PULL')]);
+  assert.equal(Powers.activate(match.fighters[0], match.fighters[1], match), true);
+  const trap = match.traps[0];
+  assert.equal(trap.armT, Powers.CONFIG.TRAP.armTime);
+
+  const lineTos = [];
+  const ctx = new Proxy({}, {
+    get(target, key) {
+      if (key === 'lineTo') return (...point) => lineTos.push(point);
+      if (!(key in target)) target[key] = () => {};
+      return target[key];
+    },
+    set(target, key, value) { target[key] = value; return true; }
+  });
+  Powers.drawBack(ctx, {
+    fxTime: 0, fighters: [match.fighters[0], match.fighters[1]],
+    traps: match.traps, statues: [], clones: []
+  });
+  assert.ok(lineTos.some(([, y]) => y === trap.y - 23));
+  assert.equal(trap.armT, Powers.CONFIG.TRAP.armTime);
+});
+
 test('activates each configured power once and blocks reuse during cooldown', () => {
   for (const power of Powers.NAMES) {
     const match = world([fighter(1, 400, power), fighter(2, 800, 'TELEPORT')]);
