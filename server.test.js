@@ -1,0 +1,126 @@
+const assert = require('node:assert/strict');
+const { once } = require('node:events');
+const test = require('node:test');
+const WebSocket = require('ws');
+const { createGameServer } = require('./server');
+
+async function openServer() {
+  const { server, wss } = createGameServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = server.address().port;
+  return {
+    server,
+    wss,
+    baseUrl: `http://127.0.0.1:${port}`,
+    wsUrl: `ws://127.0.0.1:${port}`
+  };
+}
+
+async function closeServer(server, wss, clients = []) {
+  clients.forEach(client => client.close());
+  await Promise.all(clients.map(client => once(client, 'close')));
+  await new Promise(resolve => wss.close(resolve));
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+}
+
+function nextMessage(ws) {
+  return new Promise((resolve, reject) => {
+    ws.once('message', raw => resolve(JSON.parse(raw.toString())));
+    ws.once('error', reject);
+  });
+}
+
+function nextMessageOfType(ws, type) {
+  return new Promise((resolve, reject) => {
+    const onMessage = raw => {
+      const message = JSON.parse(raw.toString());
+      if (message.type !== type) return;
+      ws.off('message', onMessage);
+      resolve(message);
+    };
+    ws.on('message', onMessage);
+    ws.once('error', reject);
+  });
+}
+
+test('serves the game and Render health check', async t => {
+  const app = await openServer();
+  t.after(() => closeServer(app.server, app.wss));
+
+  const page = await fetch(app.baseUrl);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /ONLINE MATCH/);
+
+  const health = await fetch(`${app.baseUrl}/healthz`);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), { status: 'ok' });
+
+  const powers = await fetch(`${app.baseUrl}/power-system.js`);
+  assert.equal(powers.status, 200);
+  assert.match(await powers.text(), /TIME SLOW/);
+});
+
+test('pairs players and broadcasts only server-simulated snapshots', async t => {
+  const app = await openServer();
+  const clients = [new WebSocket(app.wsUrl), new WebSocket(app.wsUrl)];
+  t.after(() => closeServer(app.server, app.wss, clients));
+  await Promise.all(clients.map(client => once(client, 'open')));
+  const [host, guest] = clients;
+
+  const hostRoom = nextMessage(host);
+  host.send(JSON.stringify({ type: 'create', powerMode: true }));
+  const { type: roomType, room } = await hostRoom;
+  assert.equal(roomType, 'room');
+  assert.match(room, /^[A-HJ-NP-Z2-9]{6}$/);
+
+  const hostJoined = nextMessage(host);
+  const guestJoined = nextMessage(guest);
+  guest.send(JSON.stringify({ type: 'join', room }));
+  assert.deepEqual(await hostJoined, { type: 'join', powerMode: true });
+  assert.deepEqual(await guestJoined, { type: 'joined', room, powerMode: true });
+
+  const hostSnapshotPromise = nextMessageOfType(host, 'state');
+  const guestSnapshotPromise = nextMessageOfType(guest, 'state');
+  const [hostSnapshot, guestSnapshot] = await Promise.all([hostSnapshotPromise, guestSnapshotPromise]);
+  for (const snapshot of [hostSnapshot, guestSnapshot]) {
+    assert.equal(snapshot.type, 'state');
+    assert.equal(snapshot.powerMode, true);
+    assert.notEqual(snapshot.fighters[0].power, snapshot.fighters[1].power);
+    assert.deepEqual(snapshot.fighters.map(fighter => fighter.health), [100, 100]);
+  }
+
+  const rejectedState = nextMessageOfType(guest, 'error');
+  guest.send(JSON.stringify({ type: 'state', state: { damage: 100 } }));
+  assert.deepEqual(await rejectedState, { type: 'error', message: 'Message is not allowed for this player.' });
+
+  const rejectedHostState = nextMessageOfType(host, 'error');
+  host.send(JSON.stringify({ type: 'state', state: { health: 0, powerCooldown: 0 } }));
+  assert.deepEqual(await rejectedHostState, { type: 'error', message: 'Message is not allowed for this player.' });
+
+  const invalidInput = nextMessageOfType(guest, 'error');
+  guest.send(JSON.stringify({ type: 'input', bits: 999 }));
+  assert.deepEqual(await invalidInput, { type: 'error', message: 'Input must be an 8-bit control mask.' });
+
+  const hostNextSnapshot = nextMessageOfType(host, 'state');
+  const guestNextSnapshot = nextMessageOfType(guest, 'state');
+  host.send(JSON.stringify({ type: 'input', bits: 2, health: 0, powerCooldown: 0 }));
+  guest.send(JSON.stringify({ type: 'input', bits: 16, damage: 100, power: 'FREEZE' }));
+  for (const snapshot of await Promise.all([hostNextSnapshot, guestNextSnapshot])) {
+    assert.equal(snapshot.type, 'state');
+    assert.equal(snapshot.fighters.length, 2);
+    assert.deepEqual(snapshot.fighters.map(fighter => fighter.health), [100, 100]);
+  }
+});
+
+test('rejects a malformed room code without closing the connection', async t => {
+  const app = await openServer();
+  const client = new WebSocket(app.wsUrl);
+  t.after(() => closeServer(app.server, app.wss, [client]));
+  await once(client, 'open');
+
+  const response = nextMessage(client);
+  client.send(JSON.stringify({ type: 'join', room: '../bad' }));
+  assert.deepEqual(await response, { type: 'error', message: 'Enter a valid room code.' });
+  assert.equal(client.readyState, WebSocket.OPEN);
+});
