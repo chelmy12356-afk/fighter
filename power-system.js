@@ -88,7 +88,7 @@
     CLONE: '#8deeff',
     INVISIBILITY: '#d3dcff',
     FREEZE: '#9cf3ff',
-    BERSERK: '#ff8a3d',
+    BERSERK: '#74ff3d',
     TRAP: '#ff5d73',
     SWAP: '#4dffb8',
     SHOCKWAVE: '#111318'
