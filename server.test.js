@@ -61,6 +61,21 @@ test('serves the game and Render health check', async t => {
   assert.match(await powers.text(), /TIME SLOW/);
 });
 
+test('keeps websocket connections alive with ping/pong heartbeats', async t => {
+  const { server, wss } = createGameServer({ heartbeatIntervalMs: 1000 });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = server.address().port;
+  const client = new WebSocket(`ws://127.0.0.1:${port}`);
+  t.after(() => closeServer(server, wss, [client]));
+  await once(client, 'open');
+
+  await Promise.race([
+    once(client, 'ping'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('No heartbeat ping received')), 2000))
+  ]);
+});
+
 test('pairs players and broadcasts only server-simulated snapshots', async t => {
   const app = await openServer();
   const clients = [new WebSocket(app.wsUrl), new WebSocket(app.wsUrl)];

@@ -13,7 +13,8 @@ function send(ws, message) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
 }
 
-function createGameServer() {
+function createGameServer(options = {}) {
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 30000;
   const rooms = new Map();
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -42,6 +43,17 @@ function createGameServer() {
     fs.createReadStream(GAME_FILE).pipe(res);
   });
   const wss = new WebSocketServer({ server, maxPayload: 1024, perMessageDeflate: false });
+  const heartbeat = setInterval(() => {
+    wss.clients.forEach(ws => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (ws.isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, heartbeatIntervalMs);
 
   function createRoomCode() {
     let code;
@@ -56,6 +68,11 @@ function createGameServer() {
   wss.on('connection', ws => {
     ws.roomCode = null;
     ws.role = null;
+    ws.isAlive = true;
+
+    ws.on('pong', () => {
+      ws.isAlive = true;
+    });
 
     ws.on('message', raw => {
       let message;
@@ -172,6 +189,10 @@ function createGameServer() {
 
   wss.on('error', error => {
     console.error('WebSocket server error:', error);
+  });
+
+  wss.on('close', () => {
+    clearInterval(heartbeat);
   });
 
   return { server, wss };
