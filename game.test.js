@@ -83,6 +83,9 @@ test('lethal hits break apart fighters in both modes and online snapshots trigge
     assert.equal(game.evaluate('M.p2.vx'), 1500);
     assert.equal(game.evaluate('breakupPieces.length'), 14);
     assert.equal(game.evaluate('blackFlash.bolts.length'), 18);
+    const boltX = game.evaluate('blackFlash.bolts[0][1][0]');
+    game.evaluate('updateBreakupPieces(0.04)');
+    assert.notEqual(game.evaluate('blackFlash.bolts[0][1][0]'), boltX);
   }
 
   const game = loadGame();

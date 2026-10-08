@@ -336,28 +336,32 @@ function makeBolt(x,y,angle,length,steps){
  }
  return points;
 }
-function createBlackFlash(f,direction){
- const x=f.x+direction*20,y=f.y-58,bolts=[];
+function createBlackFlashBolts(x,y){
+ const bolts=[];
  for(let index=0;index<12;index++){
   const angle=TAU*index/12+rr(-.12,.12),startX=x+Math.cos(angle)*8,startY=y+Math.sin(angle)*8;
   const bolt=makeBolt(startX,startY,angle,rr(95,185),6);bolts.push(bolt);
   if(index%2===0)bolts.push(makeBolt(bolt[2][0],bolt[2][1],angle+(index%4===0?1:-1)*rr(.62,.98),rr(34,62),3));
  }
- blackFlash={x,y,t:0,duration:.82,bolts};
+ return bolts;
+}
+function createBlackFlash(f,direction){
+ const x=f.x+direction*20,y=f.y-58;
+ blackFlash={x,y,t:0,duration:.82,bolts:createBlackFlashBolts(x,y),refresh:0,flicker:1};
 }
 function drawBlackFlash(){
  if(!blackFlash)return;
  const progress=cl(blackFlash.t/blackFlash.duration,0,1),fade=1-progress;
- const core=cl(1-progress/.2,0,1),{x,y}=blackFlash;
+ const core=cl(1-progress/.2,0,1),{x,y}=blackFlash,flicker=blackFlash.flicker;
  X.save();
  X.fillStyle=rgb(.12,0,.025,.22*fade+.1*core);X.fillRect(0,0,1280,720);
  for(const [index,points] of blackFlash.bolts.entries()){
   X.beginPath();X.moveTo(points[0][0],points[0][1]);
   for(let point=1;point<points.length;point++)X.lineTo(points[point][0],points[point][1]);
-  X.lineCap='round';X.lineJoin='miter';X.shadowColor='#ff173b';X.shadowBlur=24*fade;
-  X.strokeStyle=rgb(.95,.015,.12,.92*fade);X.lineWidth=(index<12?9:5)*fade+1;X.stroke();
+  X.lineCap='round';X.lineJoin='miter';X.shadowColor='#ff173b';X.shadowBlur=24*fade*flicker;
+  X.strokeStyle=rgb(.95,.015,.12,.92*fade*flicker);X.lineWidth=(index<12?9:5)*fade*flicker+1;X.stroke();
   X.shadowBlur=0;X.strokeStyle=rgb(.035,0,.01,.98*fade);X.lineWidth=(index<12?4.5:2.5)*fade+.7;X.stroke();
-  X.strokeStyle=rgb(1,.2,.24,.82*fade);X.lineWidth=1.2*fade;X.stroke();
+  X.strokeStyle=rgb(1,.2,.24,.82*fade*flicker);X.lineWidth=1.2*fade*flicker;X.stroke();
  }
  X.shadowColor='#ff173b';X.shadowBlur=28*fade;
  X.strokeStyle=rgb(.85,.015,.1,.85*fade);X.lineWidth=3*fade;
@@ -390,7 +394,14 @@ function createBreakup(f,direction){
  for(const key of ['handB','handF','footB','footF'])addPiece(p[key],p[key],dk(f.color),4,true);
 }
 function updateBreakupPieces(dt){
- if(blackFlash){blackFlash.t+=dt;if(blackFlash.t>=blackFlash.duration)blackFlash=null}
+ if(blackFlash){
+  blackFlash.t+=dt;blackFlash.refresh-=dt;
+  while(blackFlash.refresh<=0&&blackFlash.t<blackFlash.duration){
+   blackFlash.bolts=createBlackFlashBolts(blackFlash.x,blackFlash.y);
+   blackFlash.flicker=rr(.68,1);blackFlash.refresh+=rr(.022,.04);
+  }
+  if(blackFlash.t>=blackFlash.duration)blackFlash=null;
+ }
  for(let i=breakupPieces.length-1;i>=0;i--){
   const piece=breakupPieces[i];piece.life-=dt;piece.vy+=1900*dt;
   piece.x+=piece.vx*dt;piece.y+=piece.vy*dt;piece.angle+=piece.spin*dt;
