@@ -4,8 +4,8 @@ const test = require('node:test');
 const WebSocket = require('ws');
 const { createGameServer } = require('./server');
 
-async function openServer() {
-  const { server, wss } = createGameServer();
+async function openServer(options = {}) {
+  const { server, wss } = createGameServer(options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const port = server.address().port;
@@ -18,8 +18,9 @@ async function openServer() {
 }
 
 async function closeServer(server, wss, clients = []) {
-  clients.forEach(client => client.close());
-  await Promise.all(clients.map(client => once(client, 'close')));
+  const openClients = clients.filter(client => client.readyState !== WebSocket.CLOSED);
+  openClients.forEach(client => client.close());
+  await Promise.all(openClients.map(client => once(client, 'close')));
   await new Promise(resolve => wss.close(resolve));
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 }
@@ -85,15 +86,20 @@ test('pairs players and broadcasts only server-simulated snapshots', async t => 
 
   const hostRoom = nextMessage(host);
   host.send(JSON.stringify({ type: 'create', powerMode: true }));
-  const { type: roomType, room } = await hostRoom;
+  const { type: roomType, room, token: hostToken } = await hostRoom;
   assert.equal(roomType, 'room');
   assert.match(room, /^[A-HJ-NP-Z2-9]{6}$/);
+  assert.match(hostToken, /^[A-Za-z0-9_-]{32}$/);
 
   const hostJoined = nextMessage(host);
   const guestJoined = nextMessage(guest);
   guest.send(JSON.stringify({ type: 'join', room }));
   assert.deepEqual(await hostJoined, { type: 'join', powerMode: true });
-  assert.deepEqual(await guestJoined, { type: 'joined', room, powerMode: true });
+  const joinedMessage = await guestJoined;
+  assert.equal(joinedMessage.type, 'joined');
+  assert.equal(joinedMessage.room, room);
+  assert.equal(joinedMessage.powerMode, true);
+  assert.match(joinedMessage.token, /^[A-Za-z0-9_-]{32}$/);
 
   const hostSnapshotPromise = nextMessageOfType(host, 'state');
   const guestSnapshotPromise = nextMessageOfType(guest, 'state');
@@ -126,6 +132,50 @@ test('pairs players and broadcasts only server-simulated snapshots', async t => 
     assert.equal(snapshot.fighters.length, 2);
     assert.deepEqual(snapshot.fighters.map(fighter => fighter.health), [100, 100]);
   }
+});
+
+test('restores a player after a temporary WebSocket disconnect', async t => {
+  const app = await openServer({ reconnectGraceMs: 2000 });
+  const host = new WebSocket(app.wsUrl);
+  const guest = new WebSocket(app.wsUrl);
+  const clients = [host, guest];
+  t.after(() => closeServer(app.server, app.wss, clients));
+  await Promise.all(clients.map(client => once(client, 'open')));
+
+  const hostRoomPromise = nextMessage(host);
+  host.send(JSON.stringify({ type: 'create', powerMode: false }));
+  const hostRoom = await hostRoomPromise;
+  const hostToken = hostRoom.token;
+
+  const hostJoinedPromise = nextMessage(host);
+  const guestJoinedPromise = nextMessage(guest);
+  guest.send(JSON.stringify({ type: 'join', room: hostRoom.room }));
+  await hostJoinedPromise;
+  const guestJoined = await guestJoinedPromise;
+  assert.match(guestJoined.token, /^[A-Za-z0-9_-]{32}$/);
+  const opponentDisconnected = nextMessageOfType(guest, 'opponent-disconnected');
+
+  host.terminate();
+  await once(host, 'close');
+  await opponentDisconnected;
+
+  const reconnectingHost = new WebSocket(app.wsUrl);
+  clients.push(reconnectingHost);
+  await once(reconnectingHost, 'open');
+  const resumedPromise = nextMessage(reconnectingHost);
+  const snapshotPromise = nextMessageOfType(reconnectingHost, 'state');
+  const opponentReconnected = nextMessageOfType(guest, 'opponent-reconnected');
+  reconnectingHost.send(JSON.stringify({
+    type: 'resume', room: hostRoom.room, token: hostToken
+  }));
+
+  const resumed = await resumedPromise;
+  assert.deepEqual(resumed, {
+    type: 'resumed', room: hostRoom.room, role: 'host',
+    powerMode: false, inMatch: true
+  });
+  assert.equal((await snapshotPromise).type, 'state');
+  await opponentReconnected;
 });
 
 test('rejects a malformed room code without closing the connection', async t => {

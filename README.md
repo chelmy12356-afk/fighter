@@ -56,7 +56,8 @@ Online matches are server-authoritative: both browsers send only an 8-bit
 control mask. The Render server simulates movement, attacks, hits, damage,
 powers, cooldowns, rounds, and rematches, then broadcasts snapshots to both
 players. Neither player's browser can submit match state or declare a hit. The
-room creator only selects the room mode and shares its code; if either player
-disconnects, the room ends. This is not rollback netcode, so a slow or unstable
-connection can make controls feel delayed. The server currently keeps matches
-in memory, so a server restart ends active rooms.
+room creator only selects the room mode and shares its code. After a temporary
+connection drop, the game attempts to reconnect and restore the room for up to
+30 seconds; if that fails, the room ends. This is not rollback netcode, so a
+slow or unstable connection can make controls feel delayed. The server keeps
+matches in memory, so a server restart ends active rooms.

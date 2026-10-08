@@ -580,6 +580,7 @@ function drawHud(){
   if(M.net.role==='host')ct('ONLINE HOST  '+M.net.room+'  '+controls,700,11,hint);
   else if(M.net.role==='client')ct('ONLINE PLAYER 2  '+M.net.room+'  '+controls,700,11,hint);
   else if(M.vsCpu)ct(P1K,700,15,hint);else{ct('P1   '+P1K,682,14,hint);ct('P2   '+P2K,702,14,hint)}
+  if(M.net.reconnecting)ct('RECONNECTING…',620,18,GOLD);
   if(M.state===GS.MATCH_END)ct('CHOOSE PLAY AGAIN OR MAIN MENU',690,20,GOLD);
 }
 function drawAnn(){
@@ -643,6 +644,8 @@ function socketSend(message){
 function disconnectOnline(){
  const net=M.net;
  net.intentional=true;
+ if(net.reconnectTimer)clearTimeout(net.reconnectTimer);
+ if(net.room&&net.ws&&net.ws.readyState===WebSocket.OPEN)socketSend({type:'leave'});
  if(net.ws&&net.ws.readyState<WebSocket.CLOSING)net.ws.close();
  M.net={role:null,ws:null,room:null,connected:false,intentional:false};
 }
@@ -680,32 +683,69 @@ function handleSocketMessage(socket,event){
  if(socket!==M.net.ws)return;
  let message;
  try{message=JSON.parse(event.data)}catch{setOnlineStatus('The server sent an invalid message.');return}
- if(message.type==='error'){setOnlineStatus(message.message||'Online request failed.');return}
+ if(message.type==='error'){
+  if(M.net.reconnecting){resetToOnlineMenu('Could not reconnect. Create or join another room.');return}
+  setOnlineStatus(message.message||'Online request failed.');return
+ }
  if(message.type==='room'&&M.net.role==='host'){
-  M.net.room=message.room;M.net.powerMode=message.powerMode===true;powersModeInput.checked=M.net.powerMode;
-  setOnlineStatus('Room '+message.room+' created. Waiting for your friend to join…'+(M.net.powerMode?' Special Powers mode is on.':''));return;
+  M.net.room=message.room;M.net.token=message.token;M.net.powerMode=message.powerMode===true;powersModeInput.checked=M.net.powerMode;
+  setOnlineStatus('Room '+message.room+' created. Waiting for your friend to join…'+(M.net.powerMode?' Special Powers mode is on.':''));return
  }
  if(message.type==='join'&&M.net.role==='host'){
-  M.net.connected=true;M.net.powerMode=message.powerMode===true;hideOnlinePanel();startMatch(false,M.net.powerMode);return;
+  M.net.connected=true;M.net.powerMode=message.powerMode===true;hideOnlinePanel();startMatch(false,M.net.powerMode);return
  }
  if(message.type==='joined'&&M.net.role==='client'){
-  M.net.room=message.room;M.net.powerMode=message.powerMode===true;M.net.connected=true;hideOnlinePanel();startMatch(false,M.net.powerMode);return;
+  M.net.room=message.room;M.net.token=message.token;M.net.powerMode=message.powerMode===true;M.net.connected=true;hideOnlinePanel();startMatch(false,M.net.powerMode);return
  }
+ if(message.type==='resumed'){
+  const wasConnected=M.net.connected;
+  M.net.reconnecting=false;M.net.reconnectTimer=null;M.net.reconnectDeadline=0;M.net.room=message.room;M.net.powerMode=message.powerMode===true;
+  if(message.inMatch){
+   if(!wasConnected)startMatch(false,M.net.powerMode);
+   M.net.connected=true;hideOnlinePanel()
+  }else{
+   M.net.connected=false;showOnlinePanel('Connection restored. Waiting for your friend to join…')
+  }
+  return
+ }
+ if(message.type==='opponent-disconnected'){setOnlineStatus('Your opponent lost connection. Waiting for them to reconnect…');return}
+ if(message.type==='opponent-reconnected'){setOnlineStatus('Your opponent reconnected.');return}
  if(message.type==='state'&&(M.net.role==='client'||M.net.role==='host')){applySnapshot(message);return}
  if(message.type==='left')resetToOnlineMenu('Your opponent disconnected. Create or join another room.');
 }
-function connectOnline(role,room=''){
- if(M.net.ws){setOnlineStatus('An online connection is already active.');return}
+function openOnlineSocket(resume=false){
+ const net=M.net;
+ if(!net.role||net.intentional)return;
  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host);
- M.net={role,ws,room:null,connected:false,powerMode:role==='host'&&powersModeInput.checked,intentional:false};
- showOnlinePanel(role==='host'?'Connecting to the server…':'Joining room…');
- ws.addEventListener('open',()=>socketSend(role==='host'?{type:'create',powerMode:M.net.powerMode}:{type:'join',room}));
+ net.ws=ws;
+ ws.addEventListener('open',()=>socketSend(resume
+  ?{type:'resume',room:net.room,token:net.token}
+  :net.role==='host'?{type:'create',powerMode:net.powerMode}:{type:'join',room:net.room}));
  ws.addEventListener('message',event=>handleSocketMessage(ws,event));
- ws.addEventListener('error',()=>setOnlineStatus('Could not connect. Check the game server and try again.'));
+ ws.addEventListener('error',()=>{
+  if(M.net.ws===ws&&!net.reconnecting)setOnlineStatus('Could not connect. Check the game server and try again.')
+ });
  ws.addEventListener('close',()=>{
   if(M.net.ws!==ws||M.net.intentional)return;
+  if(net.token&&net.room){
+   net.ws=null;
+   if(!net.reconnecting)net.reconnectDeadline=Date.now()+30000;
+   net.reconnecting=true;
+   setOnlineStatus('Connection interrupted. Reconnecting…');
+   net.reconnectTimer=setTimeout(()=>{
+    if(Date.now()>=net.reconnectDeadline){resetToOnlineMenu('Could not reconnect. Create or join another room.');return}
+    openOnlineSocket(true)
+   },1000);
+   return
+  }
   resetToOnlineMenu('Connection lost. Reconnect and try again.');
  });
+}
+function connectOnline(role,room=''){
+ if(M.net.ws){setOnlineStatus('An online connection is already active.');return}
+ M.net={role,ws:null,room:room||null,token:null,connected:false,powerMode:role==='host'&&powersModeInput.checked,intentional:false,reconnecting:false,reconnectTimer:null,reconnectDeadline:0};
+ showOnlinePanel(role==='host'?'Connecting to the server…':'Joining room…');
+ openOnlineSocket()
 }
 function beginOnlineHost(){
  if(!M.net.ws){connectOnline('host');return}

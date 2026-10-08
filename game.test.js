@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const test = require('node:test');
 const PowerSystem = require('./power-system');
 
-function loadGame() {
+function loadGame(network = {}) {
   const noop = () => {};
   const context2d = new Proxy({}, {
     get(target, key) {
@@ -47,12 +47,13 @@ function loadGame() {
   const sandbox = {
     document, PowerSystem, performance: { now: () => 0 },
     requestAnimationFrame: noop, setInterval: noop,
+    setTimeout: network.setTimeout || noop, clearTimeout: network.clearTimeout || noop,
     addEventListener: (event, callback) => {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(callback);
     },
     location: { protocol: 'http:', host: 'localhost' },
-    WebSocket: { OPEN: 1, CLOSING: 2 },
+    WebSocket: network.WebSocket || { OPEN: 1, CLOSING: 2 },
     Math, Set, Map, Object, Array, String, Number, JSON, console
   };
   vm.createContext(sandbox);
@@ -126,6 +127,70 @@ test('Host Online Powers opens room setup with powers enabled, not a local match
   assert.equal(game.element('online-panel').hidden, false);
   assert.equal(game.evaluate('M.state'), 0);
   assert.equal(game.evaluate('M.net.role'), null);
+});
+
+test('client automatically resumes its room after a WebSocket closes', () => {
+  class FakeWebSocket {
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+    static instances = [];
+
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.listeners = new Map();
+      this.sent = [];
+      FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener(event, callback) {
+      this.listeners.set(event, callback);
+    }
+
+    emit(event, data = {}) {
+      this.listeners.get(event)?.(data);
+    }
+
+    send(message) {
+      this.sent.push(JSON.parse(message));
+    }
+  }
+
+  const timers = [];
+  const game = loadGame({
+    WebSocket: FakeWebSocket,
+    setTimeout: callback => { timers.push(callback); return timers.length; }
+  });
+  game.evaluate('connectOnline("host")');
+  const firstSocket = FakeWebSocket.instances[0];
+  firstSocket.readyState = FakeWebSocket.OPEN;
+  firstSocket.emit('open');
+  firstSocket.emit('message', {
+    data: JSON.stringify({ type: 'room', room: 'ABC234', token: 'resume-token', powerMode: false })
+  });
+  firstSocket.readyState = FakeWebSocket.CLOSED;
+  firstSocket.emit('close');
+
+  assert.equal(game.evaluate('M.net.reconnecting'), true);
+  assert.equal(timers.length, 1);
+  timers[0]();
+
+  const resumedSocket = FakeWebSocket.instances[1];
+  resumedSocket.readyState = FakeWebSocket.OPEN;
+  resumedSocket.emit('open');
+  assert.deepEqual(resumedSocket.sent[0], {
+    type: 'resume', room: 'ABC234', token: 'resume-token'
+  });
+  resumedSocket.emit('message', {
+    data: JSON.stringify({
+      type: 'resumed', room: 'ABC234', role: 'host', powerMode: false, inMatch: true
+    })
+  });
+
+  assert.equal(game.evaluate('M.net.reconnecting'), false);
+  assert.equal(game.evaluate('M.net.connected'), true);
+  assert.equal(game.evaluate('M.state'), 1);
 });
 
 test('CPU activates each assigned power when its ability is useful', () => {

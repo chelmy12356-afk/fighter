@@ -15,6 +15,7 @@ function send(ws, message) {
 
 function createGameServer(options = {}) {
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 30000;
+  const reconnectGraceMs = options.reconnectGraceMs ?? 30000;
   const rooms = new Map();
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -65,6 +66,33 @@ function createGameServer(options = {}) {
     return code;
   }
 
+  function publishSnapshot(room) {
+    if (!room.simulation) return;
+    const snapshot = room.simulation.snapshot();
+    send(room.host, snapshot);
+    send(room.guest, snapshot);
+  }
+
+  function startSimulation(room) {
+    room.simulation = new GameSimulation(room.powerMode);
+    publishSnapshot(room);
+    room.tickTimer = setInterval(() => {
+      if (!room.simulation) return;
+      room.simulation.step(1 / 60);
+      room.snapshotCounter++;
+      if (room.snapshotCounter % 3 === 0) publishSnapshot(room);
+    }, 1000 / 60);
+  }
+
+  function removeRoom(code, room) {
+    for (const role of ['host', 'guest']) {
+      if (room.reconnectTimers[role]) clearTimeout(room.reconnectTimers[role]);
+    }
+    if (room.tickTimer) clearInterval(room.tickTimer);
+    room.simulation = null;
+    rooms.delete(code);
+  }
+
   wss.on('connection', ws => {
     ws.roomCode = null;
     ws.role = null;
@@ -95,11 +123,53 @@ function createGameServer(options = {}) {
         const code = createRoomCode();
         rooms.set(code, {
           host: ws, guest: null, powerMode: message.powerMode === true,
+          hostToken: crypto.randomBytes(24).toString('base64url'),
+          guestToken: null, reconnectTimers: { host: null, guest: null },
           simulation: null, tickTimer: null, snapshotCounter: 0
         });
         ws.roomCode = code;
         ws.role = 'host';
-        send(ws, { type: 'room', room: code, powerMode: message.powerMode === true });
+        send(ws, {
+          type: 'room', room: code, token: rooms.get(code).hostToken,
+          powerMode: message.powerMode === true
+        });
+        return;
+      }
+
+      if (message.type === 'resume') {
+        const code = typeof message.room === 'string' ? message.room.toUpperCase() : '';
+        const room = rooms.get(code);
+        const role = room && message.token === room.hostToken
+          ? 'host'
+          : room && message.token === room.guestToken ? 'guest' : null;
+        if (ws.roomCode || !role || room[role] || !room.reconnectTimers[role]) {
+          send(ws, { type: 'error', message: 'Room unavailable. Reconnect window expired.' });
+          return;
+        }
+        clearTimeout(room.reconnectTimers[role]);
+        room.reconnectTimers[role] = null;
+        room[role] = ws;
+        ws.roomCode = code;
+        ws.role = role;
+        send(ws, {
+          type: 'resumed', room: code, role, powerMode: room.powerMode,
+          inMatch: !!room.simulation
+        });
+        if (room.simulation) publishSnapshot(room);
+        send(room[role === 'host' ? 'guest' : 'host'], { type: 'opponent-reconnected' });
+        return;
+      }
+
+      if (message.type === 'leave') {
+        const code = ws.roomCode;
+        const room = code && rooms.get(code);
+        if (room && room[ws.role] === ws) {
+          const otherRole = ws.role === 'host' ? 'guest' : 'host';
+          send(room[otherRole], { type: 'left' });
+          removeRoom(code, room);
+          ws.roomCode = null;
+          ws.role = null;
+        }
         return;
       }
 
@@ -110,28 +180,20 @@ function createGameServer(options = {}) {
           return;
         }
         const room = rooms.get(code);
-        if (!room || room.guest) {
+        if (!room || !room.host || room.guest) {
           send(ws, { type: 'error', message: 'Room unavailable. Check the code and try again.' });
           return;
         }
         room.guest = ws;
+        room.guestToken = crypto.randomBytes(24).toString('base64url');
         ws.roomCode = code;
         ws.role = 'guest';
-        room.simulation = new GameSimulation(room.powerMode);
         send(room.host, { type: 'join', powerMode: room.powerMode });
-        send(ws, { type: 'joined', room: code, powerMode: room.powerMode });
-        const publish = () => {
-          const snapshot = room.simulation.snapshot();
-          send(room.host, snapshot);
-          send(room.guest, snapshot);
-        };
-        publish();
-        room.tickTimer = setInterval(() => {
-          if (!room.simulation) return;
-          room.simulation.step(1 / 60);
-          room.snapshotCounter++;
-          if (room.snapshotCounter % 3 === 0) publish();
-        }, 1000 / 60);
+        send(ws, {
+          type: 'joined', room: code, token: room.guestToken,
+          powerMode: room.powerMode
+        });
+        startSimulation(room);
         return;
       }
 
@@ -173,13 +235,19 @@ function createGameServer(options = {}) {
 
     ws.on('close', () => {
       if (!ws.roomCode) return;
-      const room = rooms.get(ws.roomCode);
-      if (!room) return;
-      const other = ws.role === 'host' ? room.guest : room.host;
-      send(other, { type: 'left' });
-      if (room.tickTimer) clearInterval(room.tickTimer);
-      room.simulation = null;
-      rooms.delete(ws.roomCode);
+      const code = ws.roomCode;
+      const room = rooms.get(code);
+      if (!room || room[ws.role] !== ws) return;
+      room[ws.role] = null;
+      const otherRole = ws.role === 'host' ? 'guest' : 'host';
+      const other = room[otherRole];
+      if (room.simulation) room.simulation.setInput(ws.role === 'host' ? 1 : 2, 0);
+      send(other, { type: 'opponent-disconnected' });
+      room.reconnectTimers[ws.role] = setTimeout(() => {
+        if (rooms.get(code) !== room || room[ws.role]) return;
+        send(room[otherRole], { type: 'left' });
+        removeRoom(code, room);
+      }, reconnectGraceMs);
     });
 
     ws.on('error', error => {
@@ -193,6 +261,7 @@ function createGameServer(options = {}) {
 
   wss.on('close', () => {
     clearInterval(heartbeat);
+    for (const [code, room] of rooms) removeRoom(code, room);
   });
 
   return { server, wss };
