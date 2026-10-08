@@ -59,8 +59,8 @@ function createFighter(id, game) {
         this.state = 7;
         this.fall = -1;
         this.grounded = false;
-        this.vx = direction * 560;
-        this.vy = -480;
+        this.vx = direction * 1500;
+        this.vy = -900;
         game.finishRound(this.id === 1 ? 2 : 1);
       }
       return this.state === 5;

@@ -34,6 +34,23 @@ test('server simulates player movement and punch damage from inputs', () => {
   assert.equal(game.fighters[1].health, 92);
 });
 
+test('lethal hits trigger a dramatic knockout launch in every mode', () => {
+  for (const powerMode of [false, true]) {
+    const game = new GameSimulation(powerMode);
+    game.state = GS.FIGHT;
+    const target = game.fighters[1];
+    target.health = 8;
+
+    target.applyHit(8, 260, 140, 0.3, 1);
+
+    assert.equal(target.state, 7);
+    assert.equal(target.health, 0);
+    assert.equal(target.vx, 1500);
+    assert.equal(target.vy, -900);
+    assert.equal(game.state, GS.ROUND_END);
+  }
+});
+
 test('server simulates powers and ignores client-supplied damage or cooldown state', () => {
   const game = new GameSimulation(true);
   game.state = GS.FIGHT;

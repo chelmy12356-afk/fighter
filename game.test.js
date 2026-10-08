@@ -75,6 +75,28 @@ test('standard mode keeps F punch and G kick while powers are a separate mode', 
   assert.equal(game.evaluate('M.p1.state'), 4);
 });
 
+test('lethal hits break apart fighters in both modes and online snapshots trigger once', () => {
+  for (const powerMode of [false, true]) {
+    const game = loadGame();
+    game.evaluate(`startMatch(true, ${powerMode}); M.state = GS.FIGHT; M.p2.die(1); drawBlackFlash()`);
+    assert.equal(game.evaluate('M.p2.broken'), true);
+    assert.equal(game.evaluate('M.p2.vx'), 1500);
+    assert.equal(game.evaluate('breakupPieces.length'), 14);
+    assert.equal(game.evaluate('blackFlash.bolts.length'), 18);
+  }
+
+  const game = loadGame();
+  game.evaluate(`M.net.connected = true;
+    applySnapshot({type:'state',state:2,time:60,round:1,endDelay:0,winner:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,H:{},fighters:[{state:0},{state:0}]});
+    applySnapshot({type:'state',state:3,time:60,round:1,endDelay:1.9,winner:1,ts:1,slowmo:0,shake:0,ox:0,oy:0,H:{},fighters:[{state:0},{state:7,x:860,y:612,fall:-1,facing:-1,vx:1500}]});`);
+  assert.equal(game.evaluate('M.p2.broken'), true);
+  assert.equal(game.evaluate('breakupPieces.length'), 14);
+  assert.equal(game.evaluate('blackFlash.bolts.length'), 18);
+  game.evaluate(`blackFlash.t=.37; applySnapshot({type:'state',state:3,time:60,round:1,endDelay:1.8,winner:1,ts:1,slowmo:0,shake:0,ox:0,oy:0,H:{},fighters:[{state:0},{state:7,x:860,y:612,fall:-1,facing:-1,vx:1500}]})`);
+  assert.equal(game.evaluate('breakupPieces.length'), 14);
+  assert.equal(game.evaluate('blackFlash.t'), 0.37);
+});
+
 test('power mode assigns unique powers and activates Shift abilities locally and online', () => {
   const game = loadGame();
   game.evaluate('startMatch(true, true); M.p1.canControl = true; M.p1.power = "PROJECTILE"; M.p2.power = "TRAP"');

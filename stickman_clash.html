@@ -100,6 +100,7 @@ class Fighter{
     power:null,powerCooldown:0,dashT:0,slowT:0,slowFactor:1,pullT:0,pullTargetId:null,freezeT:0,invisibleT:0,berserkT:0,
    su:0,ac:0,rc:0,dmg:0,kb:0,launch:0,stun:0,rad:0,heavy:false,canControl:false,aiOn:false,target:null,
    prev:newIn(),ai:newIn(),skill:.7,aiTimer:0,aiPowerT:0,aiAct:'wait',q:[],seen:-1,react:-1,blk:false,blkT:0,punish:false,aaOk:false,tAir:false,airDir:0,airCross:false})}
+ broken=false;
  height(){return Math.max(0,GY-this.y)}
  readInput(){if(!this.canControl)return newIn();return this.ctrl==='CPU'?this.ai:readKeys(this.ctrl)}
  physics(dt){
@@ -195,7 +196,7 @@ class Fighter{
    if(this.health<=0)this.die(fd);return true}
   this.health=Math.max(0,this.health-dmg);this.flash=.16;this.attacking=false;this.state=6;this.hs=stun;
   this.vx=fd*kb;this.vy=-launch;if(this.health<=0)this.die(fd);return false}
- die(fd){this.state=7;this.health=0;this.fall=-1;this.grounded=false;this.vx=fd*560;this.vy=-480;play('ko');onDied(this)}
+ die(fd){this.state=7;this.health=0;this.fall=-1;this.grounded=false;this.broken=true;this.vx=fd*1500;this.vy=-900;createBreakup(this,fd);play('ko');onDied(this)}
  land(){if(this.state===7){if(this.fall<0){this.fall=0;this.vx*=.3;play('hit')}}
   else if(this.state===2)this.state=0;else if(this.state===6)this.vx*=.55}
  reset(x,face){PowerSystem.resetFighter(this);Object.assign(this,{health:100,state:0,vx:0,vy:0,x,y:GY,facing:face,attacking:false,at:0,hs:0,flash:0,bflash:0,fall:-1,freeze:0,
@@ -295,6 +296,7 @@ class Fighter{
  }
  hitPose(){const p=base();return Object.assign(p,{head:[-8,-90],neck:[-5,-80],shoulder:[-4,-74],hip:[3,-46],handF:[-13,-85],elbowF:[-5,-76],handB:[20,-58],elbowB:[9,-63],kneeF:[15,-26],footF:[22,-8],kneeB:[-8,-22],footB:[-19,0]})}
  draw(){
+  if(this.broken)return;
   const p=this.pose();let bc=this.color,kc=dk(this.color);
   if(this.flash>0)bc=kc=[1,1,1];
   else if(this.bflash>0){bc=mix(this.color,[1,.9,.3],.6);kc=mix(dk(this.color),[1,.9,.3],.6)}
@@ -325,6 +327,85 @@ const GS={MENU:0,INTRO:1,FIGHT:2,ROUND_END:3,AWARD:4,MATCH_END:5};
 const M={state:0,p1:null,p2:null,fighters:[],vsCpu:true,powerMode:false,projectiles:[],clones:[],traps:[],statues:[],shockwaves:[],effects:[],round:1,time:RT,winner:null,endDelay:0,ts:1,slowmo:0,shake:0,ox:0,oy:0,msg:'',msgT:0,net:{role:null,ws:null,room:null,connected:false,powerMode:false,intentional:false},left:AL,right:AR,groundY:GY};
 const H={p1n:'PLAYER 1',p2n:'PLAYER 2',p1w:0,p2w:0,d1:100,d2:100,time:60,round:1,h1:100,h2:100};
 let timers=[],fx=[],ann=null;
+let breakupPieces=[],blackFlash=null;
+function makeBolt(x,y,angle,length,steps){
+ const points=[[x,y]],cos=Math.cos(angle),sin=Math.sin(angle);
+ for(let step=1;step<=steps;step++){
+  const distance=length*step/steps,jitter=step===steps?rr(-5,5):rr(-19,19);
+  points.push([x+cos*distance-sin*jitter,y+sin*distance+cos*jitter]);
+ }
+ return points;
+}
+function createBlackFlash(f,direction){
+ const x=f.x+direction*20,y=f.y-58,bolts=[];
+ for(let index=0;index<12;index++){
+  const angle=TAU*index/12+rr(-.12,.12),startX=x+Math.cos(angle)*8,startY=y+Math.sin(angle)*8;
+  const bolt=makeBolt(startX,startY,angle,rr(95,185),6);bolts.push(bolt);
+  if(index%2===0)bolts.push(makeBolt(bolt[2][0],bolt[2][1],angle+(index%4===0?1:-1)*rr(.62,.98),rr(34,62),3));
+ }
+ blackFlash={x,y,t:0,duration:.82,bolts};
+}
+function drawBlackFlash(){
+ if(!blackFlash)return;
+ const progress=cl(blackFlash.t/blackFlash.duration,0,1),fade=1-progress;
+ const core=cl(1-progress/.2,0,1),{x,y}=blackFlash;
+ X.save();
+ X.fillStyle=rgb(.12,0,.025,.22*fade+.1*core);X.fillRect(0,0,1280,720);
+ for(const [index,points] of blackFlash.bolts.entries()){
+  X.beginPath();X.moveTo(points[0][0],points[0][1]);
+  for(let point=1;point<points.length;point++)X.lineTo(points[point][0],points[point][1]);
+  X.lineCap='round';X.lineJoin='miter';X.shadowColor='#ff173b';X.shadowBlur=24*fade;
+  X.strokeStyle=rgb(.95,.015,.12,.92*fade);X.lineWidth=(index<12?9:5)*fade+1;X.stroke();
+  X.shadowBlur=0;X.strokeStyle=rgb(.035,0,.01,.98*fade);X.lineWidth=(index<12?4.5:2.5)*fade+.7;X.stroke();
+  X.strokeStyle=rgb(1,.2,.24,.82*fade);X.lineWidth=1.2*fade;X.stroke();
+ }
+ X.shadowColor='#ff173b';X.shadowBlur=28*fade;
+ X.strokeStyle=rgb(.85,.015,.1,.85*fade);X.lineWidth=3*fade;
+ X.beginPath();X.arc(x,y,14+progress*150,0,TAU);X.stroke();
+ X.strokeStyle=rgb(.04,0,.01,.96*fade);X.lineWidth=8*fade+1;
+ for(let index=0;index<12;index++){
+  const angle=TAU*index/12+.12,inner=11+progress*18,outer=48+progress*118+(index%3)*20;
+  X.beginPath();X.moveTo(x+Math.cos(angle)*inner,y+Math.sin(angle)*inner);
+  X.lineTo(x+Math.cos(angle+.06)*outer,y+Math.sin(angle+.06)*outer);X.stroke();
+ }
+ X.shadowBlur=0;ci([x,y],3+core*17,rgb(1,.08,.16,.9*fade));
+ X.restore();
+}
+function createBreakup(f,direction){
+ createBlackFlash(f,direction);
+ const p=f.pose(),parts=[
+  ['neck','hip',5],['hip','kneeB',4],['kneeB','footB',4],['shoulder','elbowB',4],['elbowB','handB',4],
+  ['hip','kneeF',5],['kneeF','footF',5],['shoulder','elbowF',5],['elbowF','handF',5]
+ ];
+ const addPiece=(pointA,pointB,color,width,circle=false)=>{
+  const centerX=(pointA[0]+pointB[0])*.5,centerY=(pointA[1]+pointB[1])*.5;
+  breakupPieces.push({x:f.x+centerX*f.sx,y:f.y+centerY,
+   angle:Math.atan2(pointB[1]-pointA[1],(pointB[0]-pointA[0])*f.sx),
+   length:Math.hypot(pointB[0]-pointA[0],pointB[1]-pointA[1]),radius:circle?width:0,
+   vx:direction*rr(560,940)+rr(-300,300),vy:rr(-1050,-420),spin:rr(-16,16),
+   color,width,life:rr(2.1,2.8)});
+ };
+ addPiece(p.head,p.head,f.color,13,true);
+ for(const [from,to,width] of parts)addPiece(p[from],p[to],from.endsWith('B')?dk(f.color):f.color,width);
+ for(const key of ['handB','handF','footB','footF'])addPiece(p[key],p[key],dk(f.color),4,true);
+}
+function updateBreakupPieces(dt){
+ if(blackFlash){blackFlash.t+=dt;if(blackFlash.t>=blackFlash.duration)blackFlash=null}
+ for(let i=breakupPieces.length-1;i>=0;i--){
+  const piece=breakupPieces[i];piece.life-=dt;piece.vy+=1900*dt;
+  piece.x+=piece.vx*dt;piece.y+=piece.vy*dt;piece.angle+=piece.spin*dt;
+  if(piece.y>GY-2){piece.y=GY-2;piece.vy*=-.32;piece.vx*=.84;piece.spin*=.72}
+  if(piece.life<=0)breakupPieces.splice(i,1);
+ }
+}
+function drawBreakupPieces(){
+ for(const piece of breakupPieces){
+  const alpha=cl(piece.life/.45,0,1);X.save();X.globalAlpha=alpha;X.translate(piece.x,piece.y);X.rotate(piece.angle);
+  if(piece.radius)ci([0,0],piece.radius,cs(piece.color));
+  else ln([-piece.length*.5,0],[piece.length*.5,0],cs(piece.color),piece.width);
+  X.restore();
+ }
+}
 const after=(s,f)=>timers.push([s,f]);
 
 function makeFighters(cpu,preview){
@@ -336,12 +417,12 @@ function makeFighters(cpu,preview){
   p1.target=p2;p2.target=p1;M.p1=p1;M.p2=p2;M.fighters=[p1,p2];
 }
 function resetHud(){H.p1n=M.p1.name;H.p2n=M.p2.name;H.p1w=H.p2w=0;H.d1=H.d2=100}
-function startMatch(cpu,powersMode=false){M.ts=1;M.slowmo=0;M.shake=0;M.vsCpu=cpu;M.powerMode=powersMode;makeFighters(cpu);resetHud();M.round=1;startRound();C.focus({preventScroll:true})}
+function startMatch(cpu,powersMode=false){M.ts=1;M.slowmo=0;M.shake=0;breakupPieces=[];blackFlash=null;M.vsCpu=cpu;M.powerMode=powersMode;makeFighters(cpu);resetHud();M.round=1;startRound();C.focus({preventScroll:true})}
 function startRound(){
-  M.state=GS.INTRO;M.time=RT;M.winner=null;H.time=RT;H.round=M.round;
+  breakupPieces=[];blackFlash=null;M.state=GS.INTRO;M.time=RT;M.winner=null;H.time=RT;H.round=M.round;
   PowerSystem.resetRound(M,M.fighters);
   if(M.powerMode&&M.net.role!=='client')PowerSystem.assignRound(M.fighters);
-  M.p1.reset(420,1);M.p2.reset(860,-1);
+  M.p1.reset(420,1);M.p2.reset(860,-1);M.p1.broken=M.p2.broken=false;
   const my=M.p1;announce('ROUND '+M.round,.8);play('bell');
   after(1.1,()=>{if(M.state!==GS.INTRO||M.p1!==my)return;announce('FIGHT!',.6);play('bell');
    after(.35,()=>{if(M.state!==GS.INTRO||M.p1!==my)return;M.state=GS.FIGHT;
@@ -352,7 +433,7 @@ function onDied(f){
   M.state=GS.ROUND_END;M.winner=f.target;M.endDelay=1.9;
   for(const x of M.fighters){x.canControl=false;x.aiOn=x.is_cpu}
   if(M.winner&&M.winner.state!==7){M.winner.state=8;M.winner.attacking=false}
-  M.ts=.3;M.slowmo=1.3;M.shake=.45;announce('K.O.!',1.3);
+  M.ts=.2;M.slowmo=1.7;M.shake=.9;announce('K.O.!',1.3);
 }
 function timeUp(){
   M.state=GS.ROUND_END;M.endDelay=1.4;
@@ -415,7 +496,7 @@ function onHit(dmg,heavy,pos,blocked){
 function process(dt){
   if(M.state===GS.FIGHT)PowerSystem.update(dt,M);
   if(M.slowmo>0){M.slowmo-=dt/Math.max(M.ts,.05);if(M.slowmo<=0){M.slowmo=0;M.ts=1}}
-  if(M.shake>0){M.shake=Math.max(0,M.shake-dt);const a=13*cl(M.shake/.25,0,1);M.ox=rr(-a,a);M.oy=rr(-a,a);if(M.shake<=0)M.ox=M.oy=0}
+  if(M.shake>0){M.shake=Math.max(0,M.shake-dt);const a=30*cl(M.shake/.75,0,1);M.ox=rr(-a,a);M.oy=rr(-a,a);if(M.shake<=0)M.ox=M.oy=0}
   else M.ox=M.oy=0;
   if(M.msgT>0){M.msgT-=dt;if(M.msgT<=0)M.msg=''}
   for(let i=timers.length-1;i>=0;i--){const t=timers[i];t[0]-=dt;if(t[0]<=0){timers.splice(i,1);t[1]()}}
@@ -506,6 +587,8 @@ function render(){
   if(M.powerMode)PowerSystem.drawBack(X,M);
   for(const f of M.fighters)f.draw();
   if(M.powerMode)PowerSystem.drawFront(X,M);
+  drawBreakupPieces();
+  drawBlackFlash();
   for(const f of fx){
    if(f.k==='s'){const a=cl(1-f.t/.22,0,1),n=f.strong?8:6;
     const bc=f.bl?[.5,.8,1]:f.strong?[1,.85,.3]:[1,1,.85];
@@ -526,6 +609,7 @@ function frame(now){
    while(acc>=1/60){for(const f of M.fighters)f.physics(1/60);acc-=1/60}
    process(dt);
   }
+  updateBreakupPieces(rd);
   render();requestAnimationFrame(frame);
 }
 
@@ -568,7 +652,12 @@ function applySnapshot(snapshot){
  M.winner=snapshot.winner===1?M.p1:snapshot.winner===2?M.p2:null;
  M.ts=snapshot.ts;M.slowmo=snapshot.slowmo;M.shake=snapshot.shake;M.ox=snapshot.ox;M.oy=snapshot.oy;
  Object.assign(H,snapshot.H);
- snapshot.fighters.forEach((data,index)=>netFields.forEach(key=>{if(key in data)M.fighters[index][key]=data[key]}));
+ snapshot.fighters.forEach((data,index)=>{
+  const fighter=M.fighters[index],knockedOut=data.state===7&&fighter.state!==7;
+  netFields.forEach(key=>{if(key in data)fighter[key]=data[key]});
+  if(data.state!==7)fighter.broken=false;
+  if(knockedOut){fighter.broken=true;createBreakup(fighter,data.vx<0?-1:1)}
+ });
  if(snapshot.powerEntities&&typeof snapshot.powerEntities==='object'){
   for(const key of ['projectiles','clones','traps','statues','shockwaves','effects'])M[key]=Array.isArray(snapshot.powerEntities[key])?snapshot.powerEntities[key]:[];
   if(Number.isFinite(snapshot.powerEntities.fxTime))M.fxTime=snapshot.powerEntities.fxTime;
